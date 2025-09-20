@@ -11,6 +11,14 @@ import base64
 from io import BytesIO
 import time
 
+# Classical ML imports
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
 # Configure the page
 st.set_page_config(
     page_title="🍳 Smart Recipe Assistant",
@@ -18,85 +26,36 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Gemini AI
+# Initialize Gemini AI - CACHED to avoid repeated API calls
 @st.cache_resource
 def init_gemini():
-    api_key = st.secrets.get("GEMINI_API_KEY", "your-gemini-api-key-here")
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-1.5-flash')
-
-model = init_gemini()
-
-# Food recognition function using Gemini Vision
-def identify_ingredients_from_image(image):
-    """Use Gemini Vision to identify ingredients in an image"""
     try:
-        # Convert PIL image to bytes
-        buffered = BytesIO()
-        image.save(buffered, format="JPEG")
-        
-        prompt = """
-        Look at this image and identify all the food ingredients you can see.
-        Return ONLY a comma-separated list of ingredient names, nothing else.
-        Be specific but concise (e.g., "tomatoes, onions, chicken breast, rice").
-        """
-        
-        response = model.generate_content([prompt, image])
-        
-        if response.text:
-            ingredients = [ing.strip() for ing in response.text.strip().split(',')]
-            return [ing for ing in ingredients if ing]  # Remove empty strings
-        else:
-            return []
-    
-    except Exception as e:
-        st.error(f"Error identifying ingredients: {str(e)}")
-        return []
+        api_key = st.secrets.get("GEMINI_API_KEY", "your-gemini-api-key-here")
+        if api_key == "your-gemini-api-key-here":
+            return None
+        genai.configure(api_key=api_key)
+        return genai.GenerativeModel('gemini-1.5-flash')
+    except Exception:
+        return None
 
-# Recipe generation function using Gemini
-def generate_recipe(ingredients: List[str], dietary_restrictions: str = "", cuisine_type: str = "", difficulty: str = "medium"):
-    """Generate a recipe using Gemini based on ingredients and preferences"""
-    
-    ingredients_text = ", ".join(ingredients)
-    
-    prompt = f"""
-    Create a detailed, practical recipe using these ingredients: {ingredients_text}
-    
-    Requirements:
-    - Dietary restrictions: {dietary_restrictions if dietary_restrictions else "None"}
-    - Cuisine style: {cuisine_type if cuisine_type else "Any"}
-    - Difficulty level: {difficulty}
-    
-    Please provide a well-structured recipe with:
-    1. **Recipe Name**
-    2. **Prep Time:** X minutes
-    3. **Cook Time:** X minutes  
-    4. **Servings:** X people
-    5. **Ingredients:** (with specific quantities)
-    6. **Instructions:** (numbered steps)
-    7. **Tips:** (cooking tips or variations)
-    
-    Make it practical and delicious! Focus on clear, easy-to-follow instructions.
-    """
+# CACHED API status check to prevent spam
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def check_api_status():
+    """Check API status once every 5 minutes"""
+    model = init_gemini()
+    if model is None:
+        return False
     
     try:
-        response = model.generate_content(prompt)
-        return response.text if response.text else "Unable to generate recipe. Please try again."
-    
-    except Exception as e:
-        st.error(f"Error generating recipe: {str(e)}")
-        return "Unable to generate recipe. Please check your API key and try again."
+        # Use a very simple prompt to minimize token usage
+        test_response = model.generate_content("Hi")
+        return bool(test_response.text)
+    except Exception:
+        return False
 
 # =============================================================================
 # CLASSICAL ML COMPONENTS (No APIs Required)
 # =============================================================================
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
 
 @st.cache_resource
 def initialize_ml_models():
@@ -254,54 +213,72 @@ def analyze_nutrition_ml(ingredients: List[str]) -> Dict:
         'category_distribution': balance_analysis['category_distribution']
     }
 
-# Fallback nutrition function
-def analyze_nutrition_fallback(ingredients: List[str]) -> Dict:
-    """Basic nutrition analysis when API is unavailable"""
+# =============================================================================
+# GEMINI AI FUNCTIONS (OPTIMIZED)
+# =============================================================================
+
+# Food recognition function using Gemini Vision - ONLY called when user clicks button
+def identify_ingredients_from_image(image):
+    """Use Gemini Vision to identify ingredients in an image"""
+    model = init_gemini()
+    if model is None:
+        st.error("❌ Gemini API not configured. Please check your API key.")
+        return []
     
-    # Basic nutrition database (per 100g serving)
-    nutrition_db = {
-        # Proteins
-        'chicken': {'protein': 25, 'calories': 165, 'carbs': 0, 'fat': 3.6, 'fiber': 0, 'sugar': 0},
-        'beef': {'protein': 26, 'calories': 250, 'carbs': 0, 'fat': 17, 'fiber': 0, 'sugar': 0},
-        'fish': {'protein': 22, 'calories': 120, 'carbs': 0, 'fat': 1.5, 'fiber': 0, 'sugar': 0},
-        'salmon': {'protein': 25, 'calories': 208, 'carbs': 0, 'fat': 12, 'fiber': 0, 'sugar': 0},
-        'eggs': {'protein': 13, 'calories': 155, 'carbs': 1, 'fat': 11, 'fiber': 0, 'sugar': 1},
-        'tofu': {'protein': 8, 'calories': 70, 'carbs': 2, 'fat': 4, 'fiber': 1, 'sugar': 1},
+    try:
+        # More concise prompt to reduce token usage
+        prompt = """List food ingredients in this image as a comma-separated list only."""
         
-        # Vegetables
-        'broccoli': {'protein': 3, 'calories': 34, 'carbs': 7, 'fat': 0.4, 'fiber': 2.6, 'sugar': 1.5},
-        'spinach': {'protein': 3, 'calories': 23, 'carbs': 4, 'fat': 0.4, 'fiber': 2.2, 'sugar': 0.4},
-        'tomatoes': {'protein': 1, 'calories': 18, 'carbs': 4, 'fat': 0.2, 'fiber': 1.2, 'sugar': 2.6},
-        'onions': {'protein': 1, 'calories': 40, 'carbs': 9, 'fat': 0.1, 'fiber': 1.7, 'sugar': 4.2},
-        'carrots': {'protein': 1, 'calories': 41, 'carbs': 10, 'fat': 0.2, 'fiber': 2.8, 'sugar': 4.7},
-        'bell pepper': {'protein': 1, 'calories': 20, 'carbs': 5, 'fat': 0.2, 'fiber': 1.7, 'sugar': 2.4},
+        response = model.generate_content([prompt, image])
         
-        # Carbs
-        'rice': {'protein': 3, 'calories': 130, 'carbs': 28, 'fat': 0.3, 'fiber': 0.4, 'sugar': 0.1},
-        'pasta': {'protein': 5, 'calories': 131, 'carbs': 25, 'fat': 1.1, 'fiber': 1.8, 'sugar': 0.6},
-        'bread': {'protein': 9, 'calories': 265, 'carbs': 49, 'fat': 3.2, 'fiber': 2.7, 'sugar': 5},
-        'potatoes': {'protein': 2, 'calories': 77, 'carbs': 17, 'fat': 0.1, 'fiber': 2.2, 'sugar': 0.8},
-        'quinoa': {'protein': 14, 'calories': 368, 'carbs': 64, 'fat': 6, 'fiber': 7, 'sugar': 0},
-        
-        # Fruits
-        'banana': {'protein': 1, 'calories': 89, 'carbs': 23, 'fat': 0.3, 'fiber': 2.6, 'sugar': 12},
-        'apple': {'protein': 0.3, 'calories': 52, 'carbs': 14, 'fat': 0.2, 'fiber': 2.4, 'sugar': 10},
-        'orange': {'protein': 1, 'calories': 47, 'carbs': 12, 'fat': 0.1, 'fiber': 2.4, 'sugar': 9},
-    }
+        if response.text:
+            ingredients = [ing.strip() for ing in response.text.strip().split(',')]
+            return [ing for ing in ingredients if ing]  # Remove empty strings
+        else:
+            return []
     
-    total_nutrition = {'protein': 0, 'calories': 0, 'carbs': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
+    except Exception as e:
+        st.error(f"Error identifying ingredients: {str(e)}")
+        return []
+
+# Recipe generation function using Gemini - ONLY called when user clicks generate
+def generate_recipe(ingredients: List[str], dietary_restrictions: str = "", cuisine_type: str = "", difficulty: str = "medium"):
+    """Generate a recipe using Gemini based on ingredients and preferences"""
     
-    for ingredient in ingredients:
-        ingredient_lower = ingredient.lower().strip()
-        
-        # Simple matching
-        for food_item, nutrition in nutrition_db.items():
-            if food_item in ingredient_lower or ingredient_lower in food_item:
-                for nutrient, value in nutrition.items():
-                    total_nutrition[nutrient] += value * 0.5  # Assume 50g serving
-                break
+    model = init_gemini()
+    if model is None:
+        return "❌ Gemini API not configured. Please check your API key in Streamlit secrets."
     
-    return total_nutrition
+    ingredients_text = ", ".join(ingredients)
+    
+    # More concise prompt to reduce token usage
+    prompt = f"""
+    Recipe for: {ingredients_text}
+    Restrictions: {dietary_restrictions or "None"}  
+    Style: {cuisine_type or "Any"}
+    Level: {difficulty}
+    
+    Format:
+    **Recipe Name**
+    Prep: X min | Cook: X min | Serves: X
+    
+    **Ingredients:**
+    (with quantities)
+    
+    **Steps:**
+    1. ...
+    2. ...
+    
+    **Tips:** Brief cooking tips
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        return response.text if response.text else "Unable to generate recipe. Please try again."
+    
+    except Exception as e:
+        st.error(f"Error generating recipe: {str(e)}")
+        return "Unable to generate recipe. Please check your API key and try again."
 
 # Save recipe function
 def save_recipe(recipe_name: str, recipe_content: str, ingredients: List[str], nutrition: Dict):
@@ -319,36 +296,42 @@ def save_recipe(recipe_name: str, recipe_content: str, ingredients: List[str], n
     
     st.session_state.recipe_history.append(recipe_data)
 
+# =============================================================================
+# STREAMLIT APP (OPTIMIZED)
+# =============================================================================
+
 # Main Streamlit App
 def main():
     st.title("🍳 Smart Recipe Assistant")
-    st.subheader("AI-Powered Recipe Generator with Gemini AI & Real Nutrition Data")
+    st.subheader("AI-Powered Recipe Generator with Gemini AI & Classical ML")
     
     # Sidebar for navigation
     st.sidebar.title("🧭 Navigation")
     page = st.sidebar.selectbox("Choose a page", ["🏠 Recipe Generator", "📚 Recipe History", "ℹ️ About"])
     
-    # API Status Check
+    # OPTIMIZED API Status Check - Only shows cached result
     with st.sidebar:
-        st.subheader("🔌 API Status")
+        st.subheader("🔌 System Status")
         
-        # API Status Check
-        try:
-            test_response = model.generate_content("Hello")
-            if test_response.text:
-                st.success("✅ Gemini AI: Connected")
-            else:
-                st.error("❌ Gemini AI: Check API key")
-        except:
-            st.error("❌ Gemini AI: Not connected")
+        # Show cached API status (updated every 5 minutes)
+        if check_api_status():
+            st.success("✅ Gemini AI: Connected")
+        else:
+            st.warning("⚠️ Gemini AI: Check connection")
+            st.info("💡 Status checked every 5 min")
         
-        # ML Models Status
+        # ML Models Status (no API calls)
         try:
             classifier_data = initialize_ml_models()
             st.success("✅ Classical ML: Ready")
-            st.info("🤖 Using scikit-learn models")
         except:
             st.error("❌ Classical ML: Error")
+        
+        # Usage counter
+        if 'api_calls_made' not in st.session_state:
+            st.session_state.api_calls_made = 0
+        
+        st.info(f"🔄 API Calls Used: {st.session_state.api_calls_made}/50")
     
     if page == "🏠 Recipe Generator":
         recipe_generator_page()
@@ -359,6 +342,12 @@ def main():
 
 def recipe_generator_page():
     st.header("🎯 Generate Your Perfect Recipe")
+    
+    # Warning about API usage
+    if st.session_state.get('api_calls_made', 0) >= 45:
+        st.error("⚠️ You're close to your daily API limit (50 calls). Use ingredients carefully!")
+    elif st.session_state.get('api_calls_made', 0) >= 40:
+        st.warning("🟡 You've used 40+ API calls today. Consider using manual ingredient entry more.")
     
     # Two columns layout
     col1, col2 = st.columns([1, 1])
@@ -371,17 +360,27 @@ def recipe_generator_page():
             image = Image.open(uploaded_file)
             st.image(image, caption="Your ingredients", use_column_width=True)
             
+            # Show warning about API usage
+            current_calls = st.session_state.get('api_calls_made', 0)
+            st.info(f"🔍 This will use 1 API call ({current_calls}/50 used)")
+            
             if st.button("🔍 Identify Ingredients", type="secondary"):
-                with st.spinner("🤖 Gemini AI is analyzing your image..."):
-                    identified_ingredients = identify_ingredients_from_image(image)
-                    if identified_ingredients:
-                        st.session_state.ingredients = identified_ingredients
-                        st.success(f"🎉 Found ingredients: {', '.join(identified_ingredients)}")
-                    else:
-                        st.warning("😅 Couldn't identify ingredients clearly. Please try another image or add manually.")
+                if current_calls >= 50:
+                    st.error("❌ Daily API limit reached! Please use manual entry or try again tomorrow.")
+                else:
+                    with st.spinner("🤖 Gemini AI is analyzing your image..."):
+                        identified_ingredients = identify_ingredients_from_image(image)
+                        st.session_state.api_calls_made = current_calls + 1
+                        
+                        if identified_ingredients:
+                            st.session_state.ingredients = identified_ingredients
+                            st.success(f"🎉 Found ingredients: {', '.join(identified_ingredients)}")
+                        else:
+                            st.warning("😅 Couldn't identify ingredients clearly. Please try another image or add manually.")
     
     with col2:
         st.subheader("✏️ Manual Ingredient Entry")
+        st.info("💡 Manual entry doesn't use API calls!")
         
         # Initialize ingredients in session state
         if 'ingredients' not in st.session_state:
@@ -437,49 +436,87 @@ def recipe_generator_page():
         )
     
     # Generate recipe
-    if st.button("🍳 Generate Recipe", type="primary", help="Create your personalized recipe!") and st.session_state.ingredients:
-        
-        with st.spinner("🤖 Gemini AI is creating your perfect recipe..."):
-            recipe = generate_recipe(
-                st.session_state.ingredients,
-                dietary_restrictions if dietary_restrictions != "None" else "",
-                cuisine_type if cuisine_type != "Any" else "",
-                difficulty.lower()
-            )
+    current_calls = st.session_state.get('api_calls_made', 0)
+    
+    # Show API usage warning before generate button
+    if current_calls >= 50:
+        st.error("❌ Daily API limit reached! Recipe generation disabled until tomorrow.")
+        generate_disabled = True
+    else:
+        st.info(f"🍳 Recipe generation will use 1 API call ({current_calls}/50 used)")
+        generate_disabled = False
+    
+    if st.button("🍳 Generate Recipe", type="primary", disabled=generate_disabled, help="Create your personalized recipe!"):
+        if st.session_state.ingredients:
             
-        # Display recipe
-        st.subheader("📋 Your Generated Recipe")
-        st.write(recipe)
+            with st.spinner("🤖 Gemini AI is creating your perfect recipe..."):
+                recipe = generate_recipe(
+                    st.session_state.ingredients,
+                    dietary_restrictions if dietary_restrictions != "None" else "",
+                    cuisine_type if cuisine_type != "Any" else "",
+                    difficulty.lower()
+                )
+                st.session_state.api_calls_made = current_calls + 1
+                
+            # Get nutrition data using Classical ML (no APIs)
+            with st.spinner("🤖 Analyzing nutrition with classical ML models..."):
+                nutrition_data = analyze_nutrition_ml(st.session_state.ingredients)
+            
+            # Display recipe
+            st.subheader("📋 Your Generated Recipe")
+            st.write(recipe)
+            
+            # Display ML-based nutrition analysis
+            st.subheader("📊 Classical ML Nutrition Analysis")
+            
+            col6, col7, col8 = st.columns(3)
+            col6.metric("🔥 Calories", f"{nutrition_data['calories']:.0f}")
+            col7.metric("💪 Protein", f"{nutrition_data['protein']:.1f}g")
+            col8.metric("🌾 Carbs", f"{nutrition_data['carbs']:.1f}g")
+            
+            col9, col10, col11 = st.columns(3)
+            col9.metric("🥑 Fat", f"{nutrition_data['fat']:.1f}g")
+            col10.metric("🌿 Fiber", f"{nutrition_data['fiber']:.1f}g")
+            col11.metric("🍯 Sugar", f"{nutrition_data['sugar']:.1f}g")
+            
+            # Display ML Classification Results
+            st.subheader("🤖 AI Ingredient Classification")
+            classification_df = pd.DataFrame([
+                {"Ingredient": ing, "ML Category": cat} 
+                for ing, cat in nutrition_data['classifications'].items()
+            ])
+            st.dataframe(classification_df, use_container_width=True)
+            
+            # Display ML Insights
+            st.subheader("🧠 AI-Generated Insights")
+            
+            col12, col13 = st.columns([2, 1])
+            
+            with col12:
+                for insight in nutrition_data['ml_insights']:
+                    st.success(insight)
+            
+            with col13:
+                st.metric("🎯 Balance Score", f"{nutrition_data['balance_score']}/100")
+                
+                # Category distribution chart
+                if nutrition_data['category_distribution']:
+                    st.write("**Ingredient Categories:**")
+                    for category, count in nutrition_data['category_distribution'].items():
+                        st.write(f"• {category}: {count}")
+            
+            # Save recipe with ML data
+            recipe_lines = recipe.split('\n')
+            recipe_name = recipe_lines[0].replace('*', '').replace('#', '').strip()
+            if not recipe_name:
+                recipe_name = f"Recipe with {', '.join(st.session_state.ingredients[:3])}"
+            
+            save_recipe(recipe_name, recipe, st.session_state.ingredients.copy(), nutrition_data)
+            
+            st.success("✅ Recipe saved to history!")
         
-        # Get nutrition data
-        with st.spinner("📊 Analyzing nutrition data..."):
-            nutrition = analyze_nutrition_edamam(st.session_state.ingredients)
-        
-        # Display nutrition info
-        st.subheader("📊 Nutrition Analysis (Estimated)")
-        
-        col6, col7, col8 = st.columns(3)
-        col6.metric("🔥 Calories", f"{nutrition['calories']:.0f}")
-        col7.metric("💪 Protein", f"{nutrition['protein']:.1f}g")
-        col8.metric("🌾 Carbs", f"{nutrition['carbs']:.1f}g")
-        
-        col9, col10, col11 = st.columns(3)
-        col9.metric("🥑 Fat", f"{nutrition['fat']:.1f}g")
-        col10.metric("🌿 Fiber", f"{nutrition['fiber']:.1f}g")
-        col11.metric("🍯 Sugar", f"{nutrition['sugar']:.1f}g")
-        
-        # Save recipe
-        recipe_lines = recipe.split('\n')
-        recipe_name = recipe_lines[0].replace('*', '').replace('#', '').strip()
-        if not recipe_name:
-            recipe_name = f"Recipe with {', '.join(st.session_state.ingredients[:3])}"
-        
-        save_recipe(recipe_name, recipe, st.session_state.ingredients.copy(), nutrition)
-        
-        st.success("✅ Recipe saved to history!")
-        
-    elif st.button("🍳 Generate Recipe", type="primary"):
-        st.warning("🥕 Please add some ingredients first!")
+        else:
+            st.warning("🥕 Please add some ingredients first!")
 
 def recipe_history_page():
     st.header("📚 Recipe History")
@@ -524,72 +561,76 @@ def about_page():
     This AI-powered system helps you create delicious recipes from ingredients you have at home, 
     reducing food waste and inspiring creativity in the kitchen.
     
+    ## ⚡ Optimized for Low API Usage
+    - **Smart Caching**: API status checked only every 5 minutes
+    - **Manual Entry First**: Encourages using manual ingredient entry
+    - **Usage Tracking**: Shows API call count to help you stay within limits
+    - **Efficient Prompts**: Shorter prompts to minimize token usage
+    
     ## 🤖 AI Components
     
     ### 1. Large Language Model (Gemini AI)
     - **Google Gemini 1.5 Flash**: Generates detailed, personalized recipes
-    - Fast, efficient, and cost-effective
-    - Considers dietary restrictions, cuisine types, and difficulty levels
+    - **Optimized Usage**: Only called when needed (photo analysis + recipe generation)
+    - **Daily Limit**: 50 free API calls per day
     
     ### 2. Computer Vision (Gemini Vision)
     - **Gemini Vision**: Identifies ingredients from photos automatically  
-    - Multi-modal AI that understands images and text
-    - Saves time and ensures you don't miss any ingredients
+    - **Smart Usage**: Only activated when user clicks "Identify Ingredients"
     
     ### 3. Classical Machine Learning (scikit-learn)
-    - **Primary**: Ingredient classification using TF-IDF + clustering
-    - **Secondary**: Nutrition prediction using Random Forest regression
-    - **Tertiary**: Recipe balance analysis using feature engineering
-    - Provides ingredient categorization, nutrition prediction, and recipe insights
+    - **Zero API Calls**: All processing done locally
+    - **Ingredient classification using TF-IDF + clustering**
+    - **Nutrition prediction using Random Forest regression**
+    - **Recipe balance analysis using feature engineering**
+    
+    ## 💡 Tips to Save API Calls
+    - **Use Manual Entry**: Type ingredients instead of photo analysis
+    - **Batch Ingredients**: Add multiple ingredients before generating recipes
+    - **Plan Ahead**: Think about what you want to cook before starting
+    - **Check Counter**: Monitor your usage in the sidebar
     
     ## 🚀 Features
     - **📸 Photo Recognition**: Take pictures of ingredients for automatic identification
     - **🤖 Smart Recipe Generation**: Personalized recipes based on your preferences
     - **🥗 Dietary Support**: Various dietary restrictions and cuisine types
     - **📊 Classical ML Analysis**: Multi-model ML pipeline for ingredient analysis
-    - **🤖 Smart Categorization**: TF-IDF vectorization with K-means clustering
-    - **🧠 AI Insights**: Machine learning-powered recipe balance scoring
     - **📚 Recipe History**: Keep track of all your generated recipes
-    - **⚡ Fast & Free**: Built with efficient, cost-effective APIs
+    - **⚡ Usage Tracking**: Monitor API calls to stay within limits
     
     ## 🛠 Technical Stack
     - **Frontend**: Streamlit Cloud
     - **AI**: Google Gemini 1.5 Flash + Classical ML (scikit-learn)
-    - **ML Models**: TF-IDF, K-Means, Random Forest, Feature Engineering
+    - **Caching**: Smart caching to reduce API calls
     - **Deployment**: Streamlit Cloud (Free hosting)
-    - **Cost**: Nearly free operation ($0.001 per recipe)
-    
-    ## 💡 Why This Solution?
-    - **Cost Effective**: Gemini is 20x cheaper than GPT-4
-    - **Fast**: Sub-second response times
-    - **Accurate**: Professional nutrition data from Edamam
-    - **Scalable**: Can handle thousands of users
-    - **Free Deployment**: Streamlit Cloud provides free hosting
-    
-    ## 🌟 CAIE Project Requirements Met
-    ✅ **LLM Integration**: Google Gemini for recipe generation  
-    ✅ **Computer Vision**: Multi-modal AI for ingredient recognition  
-    ✅ **Classical ML**: scikit-learn models for nutrition & categorization  
-    ✅ **Working Interface**: Full-featured web application  
-    ✅ **Real Use Case**: Solves food waste and meal planning  
-    ✅ **Deployment**: Live on Streamlit Cloud  
     
     Built as part of the CAIE (Certified AI Engineer) final project 2025.
     """)
     
-    # Add some fun stats
+    # Usage statistics
     st.subheader("📈 Usage Statistics")
     
-    if 'recipe_history' in st.session_state and st.session_state.recipe_history:
-        total_recipes = len(st.session_state.recipe_history)
-        total_ingredients = sum(len(r['ingredients']) for r in st.session_state.recipe_history)
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Recipes", total_recipes)
-        col2.metric("Ingredients Used", total_ingredients)
-        col3.metric("Avg per Recipe", f"{total_ingredients/total_recipes:.1f}")
-    else:
-        st.info("Generate some recipes to see your personal stats!")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        api_calls = st.session_state.get('api_calls_made', 0)
+        st.metric("API Calls Used", f"{api_calls}/50")
+    
+    with col2:
+        remaining = max(0, 50 - api_calls)
+        st.metric("Remaining Calls", remaining)
+    
+    with col3:
+        if 'recipe_history' in st.session_state:
+            total_recipes = len(st.session_state.recipe_history)
+            st.metric("Recipes Created", total_recipes)
+        else:
+            st.metric("Recipes Created", 0)
+    
+    if api_calls > 0:
+        usage_percentage = (api_calls / 50) * 100
+        st.progress(usage_percentage / 100)
+        st.caption(f"Daily usage: {usage_percentage:.1f}%")
 
 if __name__ == "__main__":
     main()
