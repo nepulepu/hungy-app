@@ -295,7 +295,7 @@ def recipe_generator_page():
     st.divider()
 
     dietary = st.selectbox("🥗 Dietary Restrictions", ["None", "Vegetarian", "Vegan", "Gluten-free", "Keto", "Low-carb", "Dairy-free"])
-    cuisine = st.selectbox("🌍 Cuisine Type", ["Any", "Italian", "Asian", "Mexican", "Indian", "Mediterranean"])
+    cuisine = st.selectbox("🌍 Cuisine Type", ["Any", "Malaysian", "Italian", "Asian", "Mexican", "Indian", "Mediterranean"])
     difficulty = st.selectbox("👨‍🍳 Difficulty", ["Easy", "Medium", "Hard"])
 
     if st.button("🍳 Generate Recipe", type="primary"):
