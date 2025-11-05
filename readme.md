@@ -119,13 +119,6 @@ From `requirements.txt`:
 
 ---
 
-## 👥 Contributors
-
-- [Your Name] – Developer & Maintainer  
-(Replace this section with actual contributors.)
-
----
-
 ## 📄 License
 
 MIT License. See `LICENSE` file for details.
